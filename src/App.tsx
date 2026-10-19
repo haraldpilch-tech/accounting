@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Wallet,
   TrendingUp,
@@ -34,7 +34,11 @@ import {
   Plus,
   Sliders,
   Globe,
-  Coins
+  Coins,
+  Cloud,
+  CloudOff,
+  KeyRound,
+  Loader2
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -51,6 +55,7 @@ import {
   Area,
   CartesianGrid
 } from 'recharts';
+import { getStoredKey, storeKey, clearKey, loadState, saveState } from './sync';
 
 // --- CURRENCY DEFINITIONS & ESTIMATED CONVERSION RATES TO EUR ---
 // Base reference = 1.0 EUR
@@ -173,6 +178,13 @@ export default function App() {
     return saved ? JSON.parse(saved) : INITIAL_GOALS;
   });
 
+  // --- Live database sync (Postgres via /api/state) ---
+  const [accessKey, setAccessKey] = useState(() => getStoredKey());
+  const [syncStatus, setSyncStatus] = useState('syncing');
+  const [keyInput, setKeyInput] = useState('');
+  const [keyError, setKeyError] = useState('');
+  const hydratedRef = useRef(false);
+
   // Modals state
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
   const [editingAccount, setEditingAccount] = useState(null);
@@ -223,6 +235,97 @@ export default function App() {
       localStorage.setItem('theme', 'light');
     }
   }, [darkMode]);
+
+  // Pull the shared state once the app has a key
+  useEffect(() => {
+    if (!accessKey) {
+      setSyncStatus('locked');
+      return;
+    }
+
+    let cancelled = false;
+    setSyncStatus('syncing');
+
+    loadState(accessKey)
+      .then(({ data }) => {
+        if (cancelled) return;
+
+        if (data) {
+          if (Array.isArray(data.accounts)) setAccounts(data.accounts);
+          if (Array.isArray(data.transactions)) setTransactions(data.transactions);
+          if (Array.isArray(data.budgets)) setBudgets(data.budgets);
+          if (Array.isArray(data.goals)) setGoals(data.goals);
+          if (typeof data.baseCurrency === 'string') setBaseCurrency(data.baseCurrency);
+          hydratedRef.current = true;
+          setSyncStatus('saved');
+        } else {
+          // First run: seed the database with what is already in this browser
+          hydratedRef.current = true;
+          setSyncStatus('syncing');
+          saveState(accessKey, { accounts, transactions, budgets, goals, baseCurrency })
+            .then(() => setSyncStatus('saved'))
+            .catch(() => setSyncStatus('offline'));
+        }
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        if (err && err.status === 401) {
+          clearKey();
+          setAccessKey('');
+          setSyncStatus('locked');
+          setKeyError('That key did not match. Please try again.');
+        } else {
+          hydratedRef.current = true;
+          setSyncStatus('offline');
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accessKey]);
+
+  // Push changes to the database (debounced)
+  useEffect(() => {
+    if (!accessKey || !hydratedRef.current) return;
+
+    const timer = setTimeout(() => {
+      setSyncStatus('syncing');
+      saveState(accessKey, { accounts, transactions, budgets, goals, baseCurrency })
+        .then(() => setSyncStatus('saved'))
+        .catch((err) => {
+          if (err && err.status === 401) {
+            clearKey();
+            setAccessKey('');
+            setSyncStatus('locked');
+          } else {
+            setSyncStatus('offline');
+          }
+        });
+    }, 700);
+
+    return () => clearTimeout(timer);
+  }, [accessKey, accounts, transactions, budgets, goals, baseCurrency]);
+
+  const handleUnlock = async (event) => {
+    event.preventDefault();
+    const value = keyInput.trim();
+    if (!value) return;
+
+    setKeyError('');
+    try {
+      await loadState(value);
+      storeKey(value);
+      setAccessKey(value);
+      setKeyInput('');
+    } catch (err) {
+      setKeyError(
+        err && err.status === 401
+          ? 'That key did not match. Please try again.'
+          : 'Could not reach the server. Check your connection.'
+      );
+    }
+  };
 
   // Form States
   const [accountForm, setAccountForm] = useState({
@@ -631,6 +734,65 @@ export default function App() {
     document.body.removeChild(link);
   };
 
+  if (syncStatus === 'locked') {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-950 px-5">
+        <div className="w-full max-w-md">
+          <div className="flex items-center justify-center mb-8">
+            <div className="p-3 bg-gradient-to-tr from-blue-600 to-indigo-600 rounded-2xl text-white shadow-lg mr-3">
+              <Wallet className="w-7 h-7" />
+            </div>
+            <span className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-indigo-300">
+              AuraFinance
+            </span>
+          </div>
+
+          <form
+            onSubmit={handleUnlock}
+            className="p-8 rounded-3xl bg-slate-900 border border-slate-800 shadow-2xl"
+          >
+            <div className="flex items-center justify-center mb-5">
+              <div className="p-3 rounded-2xl bg-slate-800 text-blue-400">
+                <KeyRound className="w-6 h-6" />
+              </div>
+            </div>
+            <h1 className="text-lg font-bold text-center text-slate-100">Unlock your books</h1>
+            <p className="text-sm text-center text-slate-400 mt-2 mb-6">
+              Your data lives in your own database. Enter your access key to continue.
+            </p>
+
+            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">
+              Access key
+            </label>
+            <input
+              type="password"
+              autoFocus
+              value={keyInput}
+              onChange={(e) => setKeyInput(e.target.value)}
+              placeholder="••••••••••••"
+              className="w-full px-4 py-3 text-sm rounded-xl bg-slate-800 border border-slate-700 text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+
+            {keyError && (
+              <p className="mt-3 text-xs font-medium text-rose-400">{keyError}</p>
+            )}
+
+            <button
+              type="submit"
+              className="mt-6 w-full py-3 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-colors"
+            >
+              Unlock
+            </button>
+
+            <p className="mt-5 text-[11px] text-center text-slate-500">
+              Stored in Postgres. Nothing is sent anywhere else.
+            </p>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={`min-h-screen transition-colors duration-200 ${darkMode ? 'dark bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-800'}`}>
       <div className="flex h-screen overflow-hidden">
@@ -710,6 +872,23 @@ export default function App() {
             </div>
 
             <div className="flex items-center space-x-3">
+              {/* Live sync indicator */}
+              <div
+                className={`hidden sm:flex items-center px-3 py-1.5 rounded-xl border text-xs font-semibold ${
+                  syncStatus === 'saved'
+                    ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400'
+                    : syncStatus === 'syncing'
+                    ? 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400'
+                    : 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-400'
+                }`}
+                title={syncStatus === 'offline' ? 'Working locally — will retry on the next change' : 'Synced with your database'}
+              >
+                {syncStatus === 'saved' && <Cloud className="w-3.5 h-3.5 mr-1.5" />}
+                {syncStatus === 'syncing' && <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />}
+                {syncStatus === 'offline' && <CloudOff className="w-3.5 h-3.5 mr-1.5" />}
+                {syncStatus === 'saved' ? 'Saved' : syncStatus === 'syncing' ? 'Saving' : 'Offline'}
+              </div>
+
               {/* Primary Base Currency Selector */}
               <div className="flex items-center space-x-2 bg-slate-100 dark:bg-slate-800 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700">
                 <Globe className="w-4 h-4 text-blue-600 dark:text-blue-400" />
