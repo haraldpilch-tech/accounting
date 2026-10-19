@@ -200,6 +200,17 @@ export default function App() {
   const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
   const [selectedGoal, setSelectedGoal] = useState(null);
 
+  // Goal create / edit form
+  const [isGoalFormOpen, setIsGoalFormOpen] = useState(false);
+  const [editingGoal, setEditingGoal] = useState(null);
+  const [goalForm, setGoalForm] = useState({
+    name: '',
+    target: '',
+    current: '0',
+    date: '',
+    currency: 'EUR'
+  });
+
   // Filter States
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState('all');
@@ -714,6 +725,65 @@ export default function App() {
       }
     }
     setIsBudgetModalOpen(false);
+  };
+
+  // Goal create / edit / delete
+  const handleOpenGoalForm = (goal = null) => {
+    if (goal) {
+      setEditingGoal(goal);
+      setGoalForm({
+        name: goal.name,
+        target: goal.target.toString(),
+        current: goal.current.toString(),
+        date: goal.date || '',
+        currency: goal.currency || 'EUR'
+      });
+    } else {
+      setEditingGoal(null);
+      setGoalForm({
+        name: '',
+        target: '',
+        current: '0',
+        date: new Date().toISOString().split('T')[0],
+        currency: baseCurrency
+      });
+    }
+    setIsGoalFormOpen(true);
+  };
+
+  const handleSaveGoal = (e) => {
+    e.preventDefault();
+    const target = parseFloat(goalForm.target);
+    const current = parseFloat(goalForm.current) || 0;
+    if (!goalForm.name.trim() || !target) return;
+
+    if (editingGoal) {
+      setGoals(prev => prev.map(g => g.id === editingGoal.id ? {
+        ...g,
+        name: goalForm.name.trim(),
+        target,
+        current,
+        date: goalForm.date,
+        currency: goalForm.currency
+      } : g));
+    } else {
+      setGoals(prev => [...prev, {
+        id: `g-${Date.now()}`,
+        name: goalForm.name.trim(),
+        target,
+        current,
+        date: goalForm.date,
+        currency: goalForm.currency
+      }]);
+    }
+
+    setIsGoalFormOpen(false);
+  };
+
+  const handleDeleteGoal = (goal) => {
+    if (window.confirm(`Delete the goal "${goal.name}"?`)) {
+      setGoals(prev => prev.filter(g => g.id !== goal.id));
+    }
   };
 
   // Export CSV
@@ -1429,7 +1499,15 @@ export default function App() {
                 </div>
 
                 <div>
-                  <h2 className="text-lg font-bold text-slate-800 dark:text-slate-100 mb-4">Multi-Currency Savings Goals</h2>
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-lg font-bold text-slate-800 dark:text-slate-100">Multi-Currency Savings Goals</h2>
+                    <button
+                      onClick={() => handleOpenGoalForm()}
+                      className="flex items-center px-3.5 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl"
+                    >
+                      <Plus className="w-3.5 h-3.5 mr-1" /> Add Goal
+                    </button>
+                  </div>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     {goals.map((goal) => {
                       const currCode = goal.currency || 'EUR';
@@ -1458,15 +1536,31 @@ export default function App() {
 
                           <div className="flex items-center justify-between pt-2">
                             <span className="text-xs font-bold text-indigo-600">{percent}%</span>
-                            <button
-                              onClick={() => {
-                                setSelectedGoal(goal);
-                                setIsGoalModalOpen(true);
-                              }}
-                              className="px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg"
-                            >
-                              + Deposit
-                            </button>
+                            <div className="flex items-center space-x-1">
+                              <button
+                                onClick={() => handleOpenGoalForm(goal)}
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+                                title="Edit goal"
+                              >
+                                <Edit3 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteGoal(goal)}
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+                                title="Delete goal"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setSelectedGoal(goal);
+                                  setIsGoalModalOpen(true);
+                                }}
+                                className="px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg"
+                              >
+                                + Deposit
+                              </button>
+                            </div>
                           </div>
                         </div>
                       );
@@ -1941,6 +2035,103 @@ export default function App() {
                   className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl"
                 >
                   Save Budget Limit
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Goal create / edit Modal */}
+      {isGoalFormOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-800 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-slate-800 dark:text-slate-100">
+                {editingGoal ? 'Edit Goal' : 'New Savings Goal'}
+              </h3>
+              <button onClick={() => setIsGoalFormOpen(false)} className="text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveGoal} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold uppercase text-slate-500 mb-1">Goal name</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Emergency Reserve"
+                  value={goalForm.name}
+                  onChange={(e) => setGoalForm({ ...goalForm, name: e.target.value })}
+                  className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold uppercase text-slate-500 mb-1">Target</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    required
+                    placeholder="0.00"
+                    value={goalForm.target}
+                    onChange={(e) => setGoalForm({ ...goalForm, target: e.target.value })}
+                    className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold uppercase text-slate-500 mb-1">Saved so far</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={goalForm.current}
+                    onChange={(e) => setGoalForm({ ...goalForm, current: e.target.value })}
+                    className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold uppercase text-slate-500 mb-1">Currency</label>
+                  <select
+                    value={goalForm.currency}
+                    onChange={(e) => setGoalForm({ ...goalForm, currency: e.target.value })}
+                    className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 focus:outline-none"
+                  >
+                    {CURRENCIES.map(c => (
+                      <option key={c.code} value={c.code}>{c.code} ({c.symbol})</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold uppercase text-slate-500 mb-1">Target date</label>
+                  <input
+                    type="date"
+                    value={goalForm.date}
+                    onChange={(e) => setGoalForm({ ...goalForm, date: e.target.value })}
+                    className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-2 flex justify-end space-x-3">
+                <button
+                  type="button"
+                  onClick={() => setIsGoalFormOpen(false)}
+                  className="px-4 py-2 text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl"
+                >
+                  {editingGoal ? 'Save changes' : 'Create goal'}
                 </button>
               </div>
             </form>
