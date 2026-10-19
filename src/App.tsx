@@ -352,6 +352,7 @@ export default function App() {
   const [txForm, setTxForm] = useState({
     description: '',
     amount: '',
+    currency: accounts[0]?.currency || 'EUR',
     type: 'expense',
     category: 'Groceries',
     accountId: accounts[0]?.id || '',
@@ -379,6 +380,13 @@ export default function App() {
     return amountInEUR / baseRateEUR;
   };
 
+  // Convert between two arbitrary currencies
+  const convertCurrency = (amount, fromCurrencyCode, toCurrencyCode) => {
+    const from = getCurrency(fromCurrencyCode).rateToEUR;
+    const to = getCurrency(toCurrencyCode).rateToEUR;
+    return (amount * from) / to;
+  };
+
   // --- COMPUTED AGGREGATED STATS (Converted to Base Currency) ---
   const totalNetWorthBase = useMemo(() => {
     return accounts.reduce((acc, curr) => {
@@ -393,7 +401,7 @@ export default function App() {
       .filter(t => t.type === 'income' && new Date(t.date).getMonth() === currentMonth && new Date(t.date).getFullYear() === currentYear)
       .reduce((sum, t) => {
         const acc = accounts.find(a => a.id === t.accountId);
-        const curr = acc ? acc.currency : 'EUR';
+        const curr = t.currency || (acc ? acc.currency : 'EUR');
         return sum + convertToBase(t.amount, curr);
       }, 0);
   }, [transactions, accounts, baseCurrency]);
@@ -405,7 +413,7 @@ export default function App() {
       .filter(t => t.type === 'expense' && new Date(t.date).getMonth() === currentMonth && new Date(t.date).getFullYear() === currentYear)
       .reduce((sum, t) => {
         const acc = accounts.find(a => a.id === t.accountId);
-        const curr = acc ? acc.currency : 'EUR';
+        const curr = t.currency || (acc ? acc.currency : 'EUR');
         return sum + convertToBase(t.amount, curr);
       }, 0);
   }, [transactions, accounts, baseCurrency]);
@@ -423,7 +431,7 @@ export default function App() {
       .filter(t => t.type === 'expense' && new Date(t.date).getMonth() === currentMonth)
       .forEach(t => {
         const acc = accounts.find(a => a.id === t.accountId);
-        const amountInBase = convertToBase(t.amount, acc?.currency || 'EUR');
+        const amountInBase = convertToBase(t.amount, t.currency || acc?.currency || 'EUR');
         map[t.category] = (map[t.category] || 0) + amountInBase;
       });
 
@@ -555,6 +563,7 @@ export default function App() {
       setTxForm({
         description: tx.description,
         amount: tx.amount,
+        currency: tx.currency || accounts.find(a => a.id === tx.accountId)?.currency || 'EUR',
         type: tx.type,
         category: tx.category,
         accountId: tx.accountId,
@@ -567,6 +576,7 @@ export default function App() {
       setTxForm({
         description: '',
         amount: '',
+        currency: accounts[0]?.currency || 'EUR',
         type: 'expense',
         category: 'Groceries',
         accountId: accounts[0]?.id || '',
@@ -583,40 +593,55 @@ export default function App() {
     if (!txForm.description || !txForm.amount) return;
 
     const numAmount = parseFloat(txForm.amount);
-    
+    const txCurrency = txForm.currency || 'EUR';
+    const targetAccount = accounts.find(a => a.id === txForm.accountId);
+    const accountCurrency = targetAccount?.currency || 'EUR';
+    const amountInAccountCurrency = convertCurrency(numAmount, txCurrency, accountCurrency);
+
     if (editingTx) {
-      // Revert previous account adjustment
       const oldTx = editingTx;
+      const oldAccount = accounts.find(a => a.id === oldTx.accountId);
+      const oldCurrency = oldTx.currency || oldAccount?.currency || 'EUR';
+      const oldAmountInAccount = convertCurrency(oldTx.amount, oldCurrency, oldAccount?.currency || 'EUR');
+
       setAccounts(prev => prev.map(acc => {
+        let balance = acc.balance;
+
+        // Undo the original posting
         if (acc.id === oldTx.accountId) {
-          const revertBal = oldTx.type === 'income' ? acc.balance - oldTx.amount : acc.balance + oldTx.amount;
-          return { ...acc, balance: revertBal };
+          balance = oldTx.type === 'income' ? balance - oldAmountInAccount : balance + oldAmountInAccount;
         }
-        return acc;
-      }));
 
-      // Apply new
-      setAccounts(prev => prev.map(acc => {
+        // Apply the edited posting
         if (acc.id === txForm.accountId) {
-          const newBal = txForm.type === 'income' ? acc.balance + numAmount : acc.balance - numAmount;
-          return { ...acc, balance: newBal };
+          balance = txForm.type === 'income'
+            ? balance + amountInAccountCurrency
+            : balance - amountInAccountCurrency;
         }
-        return acc;
+
+        return balance === acc.balance ? acc : { ...acc, balance };
       }));
 
-      setTransactions(prev => prev.map(t => t.id === editingTx.id ? { ...txForm, amount: numAmount, id: editingTx.id } : t));
+      setTransactions(prev => prev.map(t =>
+        t.id === editingTx.id
+          ? { ...t, ...txForm, amount: numAmount, currency: txCurrency }
+          : t
+      ));
     } else {
       const newTx = {
         id: `tx-${Date.now()}`,
         ...txForm,
-        amount: numAmount
+        amount: numAmount,
+        currency: txCurrency
       };
 
       setTransactions(prev => [newTx, ...prev]);
 
       setAccounts(prev => prev.map(acc => {
         if (acc.id === txForm.accountId) {
-          const newBal = txForm.type === 'income' ? acc.balance + numAmount : acc.balance - numAmount;
+          const newBal = txForm.type === 'income'
+            ? acc.balance + amountInAccountCurrency
+            : acc.balance - amountInAccountCurrency;
           return { ...acc, balance: newBal };
         }
         return acc;
@@ -632,7 +657,9 @@ export default function App() {
 
     setAccounts(prev => prev.map(acc => {
       if (acc.id === tx.accountId) {
-        const reverted = tx.type === 'income' ? acc.balance - tx.amount : acc.balance + tx.amount;
+        const txCurrency = tx.currency || acc.currency || 'EUR';
+        const amountInAccount = convertCurrency(tx.amount, txCurrency, acc.currency || 'EUR');
+        const reverted = tx.type === 'income' ? acc.balance - amountInAccount : acc.balance + amountInAccount;
         return { ...acc, balance: reverted };
       }
       return acc;
@@ -791,7 +818,7 @@ export default function App() {
     const headers = ['Date,Description,Category,Type,Amount,Currency,Account,Status,Notes'];
     const rows = filteredTransactions.map(t => {
       const acc = accounts.find(a => a.id === t.accountId);
-      return `"${t.date}","${t.description}","${t.category}","${t.type}",${t.amount},"${acc?.currency || 'EUR'}","${acc?.name || 'Unknown'}","${t.status}","${t.notes || ''}"`;
+      return `"${t.date}","${t.description}","${t.category}","${t.type}",${t.amount},"${t.currency || acc?.currency || 'EUR'}","${acc?.name || 'Unknown'}","${t.status}","${t.notes || ''}"`;
     });
 
     const csvContent = 'data:text/csv;charset=utf-8,' + [headers, ...rows].join('\n');
@@ -1370,7 +1397,7 @@ export default function App() {
                         {filteredTransactions.length > 0 ? (
                           filteredTransactions.map((t) => {
                             const acc = accounts.find(a => a.id === t.accountId);
-                            const currencyCode = acc?.currency || 'EUR';
+                            const currencyCode = t.currency || acc?.currency || 'EUR';
                             return (
                               <tr key={t.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
                                 <td className="px-6 py-4 font-semibold text-slate-800 dark:text-slate-200">
@@ -1465,7 +1492,7 @@ export default function App() {
                         .filter(t => t.type === 'expense' && t.category === b.category)
                         .reduce((sum, t) => {
                           const acc = accounts.find(a => a.id === t.accountId);
-                          return sum + convertToBase(t.amount, acc?.currency || 'EUR');
+                          return sum + convertToBase(t.amount, t.currency || acc?.currency || 'EUR');
                         }, 0);
 
                       const percent = Math.min(100, Math.round((currentSpentBase / b.limit) * 100));
@@ -1890,10 +1917,10 @@ export default function App() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div>
                   <label className="block text-xs font-semibold uppercase text-slate-500 mb-1">
-                    Amount ({getCurrency(accounts.find(a => a.id === txForm.accountId)?.currency || 'EUR').symbol})
+                    Amount ({getCurrency(txForm.currency).symbol})
                   </label>
                   <input
                     type="number"
@@ -1904,6 +1931,19 @@ export default function App() {
                     onChange={(e) => setTxForm({ ...txForm, amount: e.target.value })}
                     className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 focus:outline-none"
                   />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold uppercase text-slate-500 mb-1">Currency</label>
+                  <select
+                    value={txForm.currency}
+                    onChange={(e) => setTxForm({ ...txForm, currency: e.target.value })}
+                    className="w-full px-3 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 focus:outline-none"
+                  >
+                    {CURRENCIES.map(c => (
+                      <option key={c.code} value={c.code}>{c.code} ({c.symbol})</option>
+                    ))}
+                  </select>
                 </div>
 
                 <div>
@@ -1937,7 +1977,14 @@ export default function App() {
                   <label className="block text-xs font-semibold uppercase text-slate-500 mb-1">Account</label>
                   <select
                     value={txForm.accountId}
-                    onChange={(e) => setTxForm({ ...txForm, accountId: e.target.value })}
+                    onChange={(e) => {
+                      const nextAccount = accounts.find(a => a.id === e.target.value);
+                      setTxForm({
+                        ...txForm,
+                        accountId: e.target.value,
+                        currency: nextAccount?.currency || txForm.currency
+                      });
+                    }}
                     className="w-full px-3 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 focus:outline-none"
                   >
                     {accounts.map(acc => (
