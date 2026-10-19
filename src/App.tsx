@@ -572,14 +572,17 @@ export default function App() {
         notes: tx.notes || ''
       });
     } else {
+      const lastAccountId = localStorage.getItem('pf_last_account');
+      const lastAccount = accounts.find(a => a.id === lastAccountId) || accounts[0];
+
       setEditingTx(null);
       setTxForm({
         description: '',
         amount: '',
-        currency: accounts[0]?.currency || 'EUR',
+        currency: lastAccount?.currency || 'EUR',
         type: 'expense',
         category: 'Groceries',
-        accountId: accounts[0]?.id || '',
+        accountId: lastAccount?.id || '',
         date: new Date().toISOString().split('T')[0],
         status: 'Cleared',
         notes: ''
@@ -594,6 +597,12 @@ export default function App() {
 
     const numAmount = parseFloat(txForm.amount);
     const txCurrency = txForm.currency || 'EUR';
+
+    try {
+      localStorage.setItem('pf_last_account', txForm.accountId);
+    } catch {
+      /* ignore */
+    }
     const targetAccount = accounts.find(a => a.id === txForm.accountId);
     const accountCurrency = targetAccount?.currency || 'EUR';
     const amountInAccountCurrency = convertCurrency(numAmount, txCurrency, accountCurrency);
@@ -1436,6 +1445,11 @@ export default function App() {
                                 </td>
                                 <td className={`px-6 py-4 text-right font-bold ${t.type === 'income' ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-900 dark:text-slate-100'}`}>
                                   {t.type === 'income' ? '+' : '-'}{formatMoney(t.amount, currencyCode)}
+                                  {acc && currencyCode !== acc.currency && (
+                                    <p className="text-[10px] font-normal text-slate-400 mt-0.5">
+                                      ≈ {formatMoney(convertCurrency(t.amount, currencyCode, acc.currency), acc.currency)} on {acc.name}
+                                    </p>
+                                  )}
                                 </td>
                                 <td className="px-6 py-4 text-center">
                                   <div className="flex items-center justify-center space-x-2">
@@ -1931,6 +1945,17 @@ export default function App() {
                     onChange={(e) => setTxForm({ ...txForm, amount: e.target.value })}
                     className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 focus:outline-none"
                   />
+                  {(() => {
+                    const formAccount = accounts.find(a => a.id === txForm.accountId);
+                    const accCur = formAccount?.currency || 'EUR';
+                    const amt = parseFloat(txForm.amount);
+                    if (!formAccount || txForm.currency === accCur || !amt) return null;
+                    return (
+                      <p className="mt-1.5 text-[11px] leading-tight text-slate-500 dark:text-slate-400">
+                        ≈ {formatMoney(convertCurrency(amt, txForm.currency, accCur), accCur)} booked to {formAccount.name} ({accCur})
+                      </p>
+                    );
+                  })()}
                 </div>
 
                 <div>
